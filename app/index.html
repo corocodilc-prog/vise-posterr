@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vice Poster — GTA-style Cover Maker</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<main class="app">
+  <section class="controls" id="controls">
+    <h1>VICE POSTER</h1>
+    <p class="tagline">Your photo + a caption, turned into a multi-panel sunset poster. Everything runs offline, in your browser.</p>
+
+    <fieldset>
+      <legend>1 · Photos</legend>
+      <label class="file">Photo A <input id="photoA" type="file" accept="image/*"></label>
+      <label class="file">Photo B <input id="photoB" type="file" accept="image/*"></label>
+      <p class="hint">Or drop an image onto the preview. One photo fills every panel; two photos alternate across panels.</p>
+      <div class="samples" id="samples">
+        <span>Samples:</span>
+        <button type="button" data-sample="pier">Pier</button>
+        <button type="button" data-sample="boulevard">Boulevard</button>
+        <button type="button" data-sample="both">Both</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>2 · Layout</legend>
+      <div class="choices" id="layouts">
+        <button type="button" data-layout="strips" class="on">3 strips</button>
+        <button type="button" data-layout="grid4">2 × 2 grid</button>
+        <button type="button" data-layout="comic6">Comic 6</button>
+      </div>
+      <p class="hint" id="panelHint">Panel 1 selected — drag the preview to pan it, use zoom below.</p>
+      <label class="slider">Zoom panel <input id="zoom" type="range" min="1" max="2.5" step="0.05" value="1"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>3 · Colour grade</legend>
+      <div class="choices" id="grades">
+        <button type="button" data-grade="sunset" class="on">Vice Sunset</button>
+        <button type="button" data-grade="neon">Neon Night</button>
+        <button type="button" data-grade="dusk">Palm Dusk</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>4 · Caption</legend>
+      <label>Title <input id="title" type="text" maxlength="28" value="Sunset Heist"></label>
+      <label>Subtitle <input id="subtitle" type="text" maxlength="40" value="VICE CITY · EST. 2026"></label>
+      <label>Caption position
+        <select id="captionPos">
+          <option value="bottom" selected>Bottom band</option>
+          <option value="top">Top band</option>
+        </select>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>5 · Export PNG</legend>
+      <div class="exports">
+        <button type="button" id="expSquare">1080 × 1080</button>
+        <button type="button" id="expPortrait">1080 × 1350</button>
+        <button type="button" id="expWide">1920 × 1080</button>
+      </div>
+      <p class="hint">PNG, ready to post. No upload — the file is made on your machine.</p>
+    </fieldset>
+
+    <p id="status" role="status">Load a photo or pick a sample to start.</p>
+  </section>
+
+  <section class="stage">
+    <canvas id="cover" width="1080" height="1080" aria-label="Poster preview — click a panel to select it, drag to pan"></canvas>
+  </section>
+</main>
+<pre id="selftest" hidden></pre>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
