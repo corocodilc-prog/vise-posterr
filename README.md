@@ -1,16 +1,13 @@
 # Vice Poster — GTA-style Cover Maker
 
 [![make.fun](https://img.shields.io/badge/make.fun-gta6--cover--art--01-ff2e88)](https://make.fun/competitions/gta6-cover-art-01)
-[![owner](https://img.shields.io/badge/owner-{owner}-blue)](https://github.com/{owner}/{repo})
-[![repo](https://img.shields.io/badge/repo-{repo}-green)](https://github.com/{owner}/{repo})
+[![owner](https://img.shields.io/badge/owner-corocodilc--prog-blue)](https://github.com/corocodilc-prog/vise-posterr)
+[![repo](https://img.shields.io/badge/repo-vise--posterr-green)](https://github.com/corocodilc-prog/vise-posterr)
 
 Turn your photo and a caption into a multi-panel GTA 6-poster-style cover —
 a Vice City sunset (or neon night) with bold comic lettering — and export it
 as a PNG ready to post. Fully offline: no uploads, no network requests, no
 external fonts. All art is drawn in code on canvas.
-
-> Note: `{owner}` / `{repo}` above are placeholders — the public GitHub repo
-> for this entry has not been created yet. Fill them in once it exists.
 
 ## Use it
 
