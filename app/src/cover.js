@@ -1,263 +1,320 @@
-// Vice Poster renderer: draws a multi-panel GTA-style sunset poster onto any
-// canvas at any pixel size. Pure canvas 2D, no network, no fonts beyond the
-// system stack. `state` is the editor state:
-//   { title, subtitle, layout, grade, captionPos,
-//     photos: [Image|null, ...],
-//     panels: [{ photo: 0, dx: 0, dy: 0, zoom: 1 }, ...] }
-// Panel transforms are in fractions of the panel size, so a crop survives a
-// resize or an export at another aspect ratio.
+// Vice Poster renderer: draws a multi-panel GTA-style sunset poster onto
+// any 2D canvas. Everything is procedural — gradient skies, a striped retro
+// sun, a blocky skyline, palm silhouettes and bold title type — so the app
+// works fully offline with no assets at all. A user photo, when one is
+// loaded, is painted into the hero panel with a warm sunset grade.
+//
+//   import { renderPoster, exportPng } from './cover.js';
+//   renderPoster(canvas, { photo, caption, subtitle, shot, width, height });
 
-export const LAYOUTS = {
-  strips: { name: '3 strips', cols: 3, rows: 1 },
-  grid4: { name: '2 x 2 grid', cols: 2, rows: 2 },
-  comic6: { name: 'Comic 6', cols: 3, rows: 2 },
-};
-
-export const GRADES = {
-  sunset: {
-    name: 'Vice Sunset',
-    sky: ['#2b1055', '#ff2e88', '#ff7a3d', '#ffc46b'],
-    sun: '#fff3b0', sunGlow: 'rgba(255,122,61,0.85)',
-    tint: ['rgba(255,46,136,0.16)', 'rgba(255,154,61,0.20)'],
-    title: ['#ffffff', '#ffd166'], accent: '#ff2e88',
+export const PALETTES = {
+  dusk: {
+    sky: ['#180836', '#7a1c60', '#ff7a30'],
+    sun: '#ffd65c',
+    sunCore: '#fff0b4',
+    sea: '#100a30',
+    glint: '#ff7a30',
+    ink: '#0c061c',
   },
   neon: {
-    name: 'Neon Night',
-    sky: ['#05001a', '#1b0f5e', '#c400ff', '#00e5ff'],
-    sun: '#e8fbff', sunGlow: 'rgba(0,229,255,0.8)',
-    tint: ['rgba(196,0,255,0.20)', 'rgba(0,229,255,0.18)'],
-    title: ['#ffffff', '#7df9ff'], accent: '#00e5ff',
+    sky: ['#040c28', '#10446e', '#18bebe'],
+    sun: '#ff50b4',
+    sunCore: '#ffbee6',
+    sea: '#040a22',
+    glint: '#18bebe',
+    ink: '#03081a',
   },
-  dusk: {
-    name: 'Palm Dusk',
-    sky: ['#062a2a', '#0d5c4d', '#d9a441', '#f4e3b2'],
-    sun: '#fff8d6', sunGlow: 'rgba(217,164,65,0.85)',
-    tint: ['rgba(13,92,77,0.20)', 'rgba(217,164,65,0.20)'],
-    title: ['#ffffff', '#ffe9a8'], accent: '#d9a441',
+  dawn: {
+    sky: ['#402060', '#e26054', '#ffc460'],
+    sun: '#fff4c8',
+    sunCore: '#fffff0',
+    sea: '#281440',
+    glint: '#ffc460',
+    ink: '#1c0c30',
   },
 };
 
-function lerp(a, b, t) { return a + (b - a) * t; }
-
-/** Panel rectangles for a layout inside the poster frame, below the sky strip. */
-export function panelRects(layout, w, h, bandH, skyH = 0) {
-  const def = LAYOUTS[layout] ?? LAYOUTS.strips;
-  const gap = Math.max(8, Math.round(w * 0.012));
-  const frame = Math.max(10, Math.round(w * 0.016));
-  const areaW = w - frame * 2;
-  const areaH = h - frame * 2 - skyH;
-  const cw = (areaW - gap * (def.cols - 1)) / def.cols;
-  const ch = (areaH - gap * (def.rows - 1)) / def.rows;
-  const rects = [];
-  for (let r = 0; r < def.rows; r++) {
-    for (let c = 0; c < def.cols; c++) {
-      rects.push({
-        x: frame + c * (cw + gap),
-        y: frame + skyH + r * (ch + gap),
-        w: cw, h: ch,
-      });
-    }
-  }
-  return { rects, gap, frame, bandH };
+/** A small deterministic generator so window lights never flicker between renders. */
+export function seededRandom(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-/** Draws one photo into a panel, cover-fit, with the panel's pan/zoom. */
-function drawPhoto(ctx, img, rect, t) {
-  if (!img) {
-    // Empty panel: deep gradient + big "?" sun placeholder, never blank.
-    const g = ctx.createLinearGradient(rect.x, rect.y, rect.x, rect.y + rect.h);
-    g.addColorStop(0, '#3a1c5e'); g.addColorStop(1, '#12081f');
-    ctx.fillStyle = g; ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    ctx.font = `900 ${Math.round(rect.h * 0.35)}px 'Arial Black', Impact, sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('+', rect.x + rect.w / 2, rect.y + rect.h / 2);
-    return;
-  }
-  const zoom = t.zoom || 1;
-  const base = Math.max(rect.w / img.naturalWidth, rect.h / img.naturalHeight) * zoom;
-  const dw = img.naturalWidth * base;
-  const dh = img.naturalHeight * base;
-  const dx = rect.x + (rect.w - dw) / 2 + (t.dx || 0) * rect.w;
-  const dy = rect.y + (rect.h - dh) / 2 + (t.dy || 0) * rect.h;
+function skyGradient(ctx, x, y, w, h, stops) {
+  const g = ctx.createLinearGradient(0, y, 0, y + h);
+  g.addColorStop(0, stops[0]);
+  g.addColorStop(0.55, stops[1]);
+  g.addColorStop(1, stops[2]);
+  ctx.fillStyle = g;
+  ctx.fillRect(x, y, w, h);
+}
+
+/** The retro sun: a disc whose lower half is cut by widening gaps. */
+function retroSun(ctx, cx, cy, r, palette) {
   ctx.save();
-  ctx.beginPath(); ctx.rect(rect.x, rect.y, rect.w, rect.h); ctx.clip();
-  ctx.drawImage(img, dx, dy, dw, dh);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.fillStyle = palette.sun;
+  ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+  // Stripe gaps, thin near the top of the cut and wider toward the bottom.
+  // NB: destination-out erases in proportion to the source alpha, so the
+  // fill must be opaque — a transparent fill (an earlier draft used
+  // rgba(0,0,0,0)) erases nothing and the sun comes out stripe-less.
+  let gapY = cy + r * 0.08;
+  let gapH = r * 0.045;
+  ctx.fillStyle = '#000';
+  ctx.globalCompositeOperation = 'destination-out';
+  while (gapY < cy + r) {
+    ctx.fillRect(cx - r, gapY, r * 2, gapH);
+    gapY += gapH + r * 0.1;
+    gapH *= 1.35;
+  }
+  ctx.restore();
+  // Bright core on top of the stripes.
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.6, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.fillStyle = palette.sunCore;
+  ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
   ctx.restore();
 }
 
-/** Halftone comic dots fading in towards the bottom of a panel. */
-function halftone(ctx, rect, step, colour) {
-  const s = Math.max(6, step);
-  ctx.fillStyle = colour;
-  for (let y = rect.y + rect.h * 0.62; y < rect.y + rect.h; y += s) {
-    const depth = (y - (rect.y + rect.h * 0.62)) / (rect.h * 0.38);
-    for (let x = rect.x + s / 2; x < rect.x + rect.w; x += s) {
-      const r = s * 0.15 * (0.5 + depth);
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+function skyline(ctx, x0, x1, baseY, maxH, palette, seed) {
+  const rnd = seededRandom(seed);
+  ctx.fillStyle = palette.ink;
+  let x = x0;
+  while (x < x1) {
+    const w = 18 + rnd() * 44;
+    const h = maxH * (0.35 + rnd() * 0.65);
+    ctx.fillRect(x, baseY - h, w, h);
+    const wins = 1 + Math.floor(rnd() * 3);
+    ctx.fillStyle = palette.sunCore;
+    for (let i = 0; i < wins; i++) {
+      ctx.fillRect(x + 4 + rnd() * Math.max(1, w - 10), baseY - h + 5 + rnd() * Math.max(1, h - 12), 4, 5);
     }
+    ctx.fillStyle = palette.ink;
+    x += w + 3 + rnd() * 10;
   }
 }
 
-/** A palm-tree silhouette: slim curved trunk + thin drooping fronds. */
-function palm(ctx, x, y, size, lean) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(lean, 1);
-  ctx.fillStyle = '#0a0512';
-  ctx.strokeStyle = '#0a0512';
-  // Trunk: a slim tapering curve, leaning slightly.
-  ctx.beginPath();
-  ctx.moveTo(-size * 0.025, 0);
-  ctx.quadraticCurveTo(size * 0.01, -size * 0.5, size * 0.07, -size * 0.9);
-  ctx.lineTo(size * 0.11, -size * 0.9);
-  ctx.quadraticCurveTo(size * 0.05, -size * 0.45, size * 0.035, 0);
-  ctx.closePath(); ctx.fill();
-  // Fronds: six thin arcs fanning from the crown, arcing up then drooping.
-  const cx = size * 0.09, cy = -size * 0.9;
-  ctx.lineWidth = Math.max(2, size * 0.022);
+function palm(ctx, baseX, baseY, h, lean, color) {
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
   ctx.lineCap = 'round';
-  for (let i = 0; i < 6; i++) {
-    const a = Math.PI * (0.06 + i * 0.176); // 11° .. 169°
-    const len = size * (0.52 + (i % 2) * 0.08);
-    const ex = cx + Math.cos(a) * len;
-    const ey = cy - Math.sin(a) * len * 0.55 + len * 0.34;
+  const topX = baseX + lean;
+  const topY = baseY - h;
+  // Leaning trunk, drawn as a chain of thick segments.
+  let px = baseX;
+  let py = baseY;
+  for (let i = 1; i <= 8; i++) {
+    const t = i / 8;
+    const nx = baseX + lean * t * t;
+    const ny = baseY - h * t;
+    ctx.lineWidth = Math.max(3, h * 0.045 * (1 - t * 0.5));
     ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.quadraticCurveTo(cx + Math.cos(a) * len * 0.5, cy - Math.sin(a) * len * 0.62, ex, ey);
+    ctx.moveTo(px, py);
+    ctx.lineTo(nx, ny);
+    ctx.stroke();
+    px = nx;
+    py = ny;
+  }
+  // Seven fronds fanning out and drooping from the crown.
+  const len = h * 0.52;
+  ctx.lineWidth = Math.max(2, h * 0.02);
+  for (let f = 0; f < 7; f++) {
+    const ang = Math.PI * (0.08 + (f / 6) * 0.84);
+    const reach = len * (f % 2 === 0 ? 1 : 0.86);
+    const midX = topX + Math.cos(ang) * reach * 0.5;
+    const midY = topY - len * 0.22;
+    const tipX = topX + Math.cos(ang) * reach;
+    const tipY = topY + Math.sin(ang) * len * 0.62 + len * 0.18;
+    ctx.beginPath();
+    ctx.moveTo(topX, topY);
+    ctx.quadraticCurveTo(midX, midY, tipX, tipY);
     ctx.stroke();
   }
-  // Coconuts.
-  ctx.beginPath(); ctx.arc(cx - size * 0.02, cy + size * 0.04, size * 0.03, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(cx + size * 0.04, cy + size * 0.05, size * 0.026, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.arc(topX - 6, topY + 8, 5, 0, Math.PI * 2);
+  ctx.arc(topX + 7, topY + 9, 5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/** One sunset scene inside a rectangle: sky, sun, sea, skyline. */
+function scene(ctx, x, y, w, h, palette, seed) {
+  const horizon = y + h * 0.62;
+  skyGradient(ctx, x, y, w, horizon - y, palette.sky);
+  const sunR = w * 0.17;
+  retroSun(ctx, x + w * 0.5, horizon - sunR * 0.42, sunR, palette);
+  ctx.fillStyle = palette.sea;
+  ctx.fillRect(x, horizon, w, y + h - horizon);
+  // Sun glints on the water.
+  const rnd = seededRandom(seed + 7);
+  ctx.fillStyle = palette.glint;
+  for (let i = 0; i < 9; i++) {
+    const sy = horizon + 6 + rnd() * (y + h - horizon - 12);
+    const sw = w * (0.1 + rnd() * 0.3);
+    ctx.fillRect(x + w * 0.5 - sw / 2, sy, sw, 2);
+  }
+  skyline(ctx, x + 4, x + w - 4, horizon + 2, h * 0.3, palette, seed);
+}
+
+/** Paints a photo cover-fit into a rectangle, with a warm sunset grade. */
+function drawPhoto(ctx, photo, x, y, w, h) {
+  const scale = Math.max(w / photo.width, h / photo.height);
+  const dw = photo.width * scale;
+  const dh = photo.height * scale;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.drawImage(photo, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+  // Warm grade: a translucent orange wash plus a violet multiply.
+  ctx.globalAlpha = 0.22;
+  ctx.fillStyle = '#ff7a30';
+  ctx.fillRect(x, y, w, h);
+  ctx.globalAlpha = 0.14;
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.fillStyle = '#5c1668';
+  ctx.fillRect(x, y, w, h);
   ctx.restore();
 }
 
-/** Big condensed title with outline, gradient fill and hard drop shadow. */
-function drawTitle(ctx, text, sub, cx, cy, maxW, grade, size) {
-  const font = `'Arial Black', Impact, 'Helvetica Neue', sans-serif`;
-  ctx.save();
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.letterSpacing = `${Math.round(size * 0.02)}px`;
-  let fs = size;
-  ctx.font = `900 ${fs}px ${font}`;
-  while (ctx.measureText(text).width > maxW && fs > size * 0.45) {
-    fs -= 2; ctx.font = `900 ${fs}px ${font}`;
+function fitFont(ctx, text, maxWidth, startPx, family) {
+  let px = startPx;
+  ctx.font = `900 ${px}px ${family}`;
+  while (px > 24 && ctx.measureText(text).width > maxWidth) {
+    px -= 2;
+    ctx.font = `900 ${px}px ${family}`;
   }
-  const grad = ctx.createLinearGradient(0, cy - fs * 0.6, 0, cy + fs * 0.6);
-  grad.addColorStop(0, grade.title[0]); grad.addColorStop(1, grade.title[1]);
-  ctx.lineJoin = 'round';
-  ctx.shadowColor = grade.accent; ctx.shadowBlur = fs * 0.22; ctx.shadowOffsetY = 0;
-  ctx.strokeStyle = '#000'; ctx.lineWidth = Math.max(4, fs * 0.14);
-  ctx.strokeText(text, cx, cy);
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = grad;
-  ctx.fillText(text, cx, cy);
-  // Hard offset shadow pass for the comic-book punch.
-  ctx.restore();
-  if (sub) {
-    ctx.save();
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const ss = Math.max(14, Math.round(size * 0.24));
-    ctx.font = `700 ${ss}px 'Arial Black', Impact, sans-serif`;
-    ctx.letterSpacing = `${Math.round(ss * 0.18)}px`;
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#000'; ctx.lineWidth = Math.max(3, ss * 0.16);
-    ctx.strokeText(sub.toUpperCase(), cx, cy + fs * 0.62);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(sub.toUpperCase(), cx, cy + fs * 0.62);
-    ctx.restore();
-  }
+  return px;
 }
+
+const DISPLAY = '"Arial Black", "Helvetica Neue", Arial, sans-serif';
 
 /**
- * Renders the poster onto `canvas` at exactly (w, h) pixels.
- * `state` follows the shape described at the top of this file.
+ * Renders the poster. `opts`:
+ *   photo    — an HTMLImageElement/canvas or null (procedural scene instead)
+ *   caption  — the big title line
+ *   subtitle — the small line under the title
+ *   shot     — a preset from shots.js ({ palette, panels, ... })
+ *   width/height — export size in pixels (default 1080x1080)
  */
-export function drawCover(canvas, state, w, h) {
-  const W = w ?? canvas.width;
-  const H = h ?? canvas.height;
-  canvas.width = W; canvas.height = H;
+export function renderPoster(canvas, opts = {}) {
+  const {
+    photo = null,
+    caption = 'VICE CITY',
+    subtitle = 'WELCOME TO LEONIDA',
+    shot = null,
+    width = 1080,
+    height = 1080,
+  } = opts;
+
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext('2d');
-  const grade = GRADES[state.grade] ?? GRADES.sunset;
-  const title = (state.title || 'SUNSET HEIST').toUpperCase();
-  const subtitle = state.subtitle || '';
-  const bandH = Math.round(H * (state.captionPos === 'top' ? 0.20 : 0.22));
+  if (!ctx) throw new Error('2d canvas context unavailable');
 
-  // 1. Sunset sky over the whole poster.
-  const sky = ctx.createLinearGradient(0, 0, 0, H);
-  grade.sky.forEach((c, i) => sky.addColorStop(i / (grade.sky.length - 1), c));
-  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+  const palette = PALETTES[shot?.palette ?? 'dusk'] ?? PALETTES.dusk;
+  const panelPalettes = (shot?.panels ?? ['dusk', 'neon', 'dawn']).map(
+    (name) => PALETTES[name] ?? PALETTES.dusk,
+  );
+  const panelTags = shot?.panelTags ?? ['BOULEVARD', 'NEON NIGHT', 'GOLDEN HOUR'];
 
-  // 2. Sky strip across the top: the big striped retro sun dips behind the
-  // panels, flanked by two palm silhouettes against the sky.
-  const frame0 = Math.max(10, Math.round(W * 0.016));
-  const skyH = Math.round(H * 0.105);
-  const sunR = skyH * 1.05;
-  const sunX = W * 0.5, sunY = frame0 + skyH * 0.5;
-  const glow = ctx.createRadialGradient(sunX, sunY, sunR * 0.2, sunX, sunY, sunR * 2.4);
-  glow.addColorStop(0, grade.sunGlow); glow.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, frame0 + skyH * 2);
-  ctx.fillStyle = grade.sun;
-  ctx.beginPath(); ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2); ctx.fill();
-  // Sun stripes (retro sunset slats) across the lower half of the sun.
-  ctx.save();
-  ctx.beginPath(); ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2); ctx.clip();
-  ctx.fillStyle = grade.sky[1];
-  for (let i = 0; i < 3; i++) {
-    const y = sunY + sunR * (0.08 + i * 0.28);
-    ctx.fillRect(sunX - sunR, y, sunR * 2, sunR * (0.05 + i * 0.025));
+  const W = width;
+  const H = height;
+  const paper = '#faf4e8';
+  const black = '#0a0614';
+  const margin = Math.round(W * 0.028);
+
+  ctx.fillStyle = paper;
+  ctx.fillRect(0, 0, W, H);
+
+  // Hero: photo when loaded, procedural sunset otherwise.
+  const hero = { x: margin, y: margin, w: W - margin * 2, h: Math.round(H * 0.61) };
+  if (photo) {
+    drawPhoto(ctx, photo, hero.x, hero.y, hero.w, hero.h);
+    // Keep the sunset mood over the photo: a soft sky tint at the top.
+    const tint = ctx.createLinearGradient(0, hero.y, 0, hero.y + hero.h * 0.5);
+    tint.addColorStop(0, 'rgba(122, 28, 96, 0.28)');
+    tint.addColorStop(1, 'rgba(122, 28, 96, 0)');
+    ctx.fillStyle = tint;
+    ctx.fillRect(hero.x, hero.y, hero.w, hero.h * 0.5);
+  } else {
+    scene(ctx, hero.x, hero.y, hero.w, hero.h, palette, 11);
   }
-  ctx.restore();
-  const palmSize = skyH * 0.85;
-  palm(ctx, W * 0.045, frame0 + skyH, palmSize, 1);
-  palm(ctx, W * 0.955, frame0 + skyH, palmSize * 0.9, -1);
+  // Framing palms lean in from the hero's lower corners either way.
+  palm(ctx, hero.x + hero.w * 0.06, hero.y + hero.h - 6, hero.h * 0.46, hero.w * 0.055, palette.ink);
+  palm(ctx, hero.x + hero.w * 0.94, hero.y + hero.h - 6, hero.h * 0.4, -hero.w * 0.048, palette.ink);
+  ctx.fillStyle = black;
+  ctx.fillRect(hero.x, hero.y + hero.h, hero.w, 3);
 
-  // 3. Panels: photos, grade tint, halftone, bold black frames.
-  const { rects, frame } = panelRects(state.layout, W, H, bandH, skyH);
-  const photos = state.photos || [];
-  rects.forEach((rect, i) => {
-    const t = (state.panels && state.panels[i]) || { photo: 0, dx: 0, dy: 0, zoom: 1 };
-    const img = photos.length ? photos[t.photo % photos.length] : null;
-    drawPhoto(ctx, img, rect, t);
-    // Grade tint wash.
-    ctx.save();
-    ctx.beginPath(); ctx.rect(rect.x, rect.y, rect.w, rect.h); ctx.clip();
-    const tint = ctx.createLinearGradient(rect.x, rect.y, rect.x, rect.y + rect.h);
-    tint.addColorStop(0, grade.tint[0]); tint.addColorStop(1, grade.tint[1]);
-    ctx.globalCompositeOperation = 'overlay';
-    ctx.fillStyle = tint; ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-    ctx.globalCompositeOperation = 'source-over';
-    halftone(ctx, rect, Math.max(7, W * 0.011), 'rgba(0,0,0,0.20)');
-    // Vignette inside the panel.
-    const vg = ctx.createRadialGradient(
-      rect.x + rect.w / 2, rect.y + rect.h / 2, Math.min(rect.w, rect.h) * 0.35,
-      rect.x + rect.w / 2, rect.y + rect.h / 2, Math.max(rect.w, rect.h) * 0.75);
-    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.35)');
-    ctx.fillStyle = vg; ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-    ctx.restore();
-    // Bold black frame + thin white inner line (the comic-book edge).
-    ctx.lineWidth = Math.max(5, W * 0.007);
-    ctx.strokeStyle = '#000';
-    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
-    ctx.lineWidth = Math.max(1.5, W * 0.0016);
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.strokeRect(rect.x + ctx.lineWidth * 3, rect.y + ctx.lineWidth * 3, rect.w - ctx.lineWidth * 6, rect.h - ctx.lineWidth * 6);
-  });
+  // Three panel thumbnails under the hero, one per mood.
+  const gap = Math.round(W * 0.015);
+  const pw = (hero.w - gap * 2) / 3;
+  const ph = Math.round(H * 0.155);
+  const py = hero.y + hero.h + Math.round(H * 0.017);
+  for (let i = 0; i < 3; i++) {
+    const px = hero.x + i * (pw + gap);
+    scene(ctx, px, py, pw, ph, panelPalettes[i], 21 + i * 12);
+    ctx.fillStyle = black;
+    ctx.fillRect(px, py + ph, pw, Math.round(H * 0.024));
+    ctx.fillStyle = paper;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const tagPx = fitFont(ctx, panelTags[i], pw * 0.9, Math.round(H * 0.016), DISPLAY);
+    ctx.font = `900 ${tagPx}px ${DISPLAY}`;
+    ctx.fillText(panelTags[i], px + pw / 2, py + ph + Math.round(H * 0.012));
+  }
 
-  // 4. Caption band: solid black slab with a neon top edge.
-  const bandY = state.captionPos === 'top' ? 0 : H - bandH;
-  ctx.fillStyle = 'rgba(5,2,12,0.92)';
-  ctx.fillRect(0, bandY, W, bandH);
-  ctx.fillStyle = grade.accent;
-  const edgeY = state.captionPos === 'top' ? bandY + bandH : bandY;
-  ctx.fillRect(0, edgeY - Math.max(3, H * 0.004), W, Math.max(3, H * 0.008));
-  const titleSize = Math.round(Math.min(W * 0.105, bandH * 0.52));
-  drawTitle(ctx, title, subtitle, W / 2, bandY + bandH * 0.46, W * 0.94, grade, titleSize);
+  // Title band: big caption, pink underline sweep, subtitle.
+  // Sizes are kept modest on purpose: at the old start size (0.10H) the
+  // subtitle baseline landed past the bottom edge on 1080x1080 exports.
+  const title = (caption || 'VICE CITY').toUpperCase();
+  const titleY = py + ph + Math.round(H * 0.03);
+  const titlePx = fitFont(ctx, title, W - margin * 2, Math.round(H * 0.075), DISPLAY);
+  ctx.font = `900 ${titlePx}px ${DISPLAY}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = black;
+  ctx.fillText(title, W / 2, titleY + titlePx);
+  const titleW = Math.min(ctx.measureText(title).width, W - margin * 2);
+  const underY = titleY + titlePx + Math.round(H * 0.008);
+  ctx.fillStyle = '#ff2a6d';
+  ctx.fillRect((W - titleW) / 2, underY, titleW, Math.round(H * 0.007));
+  ctx.fillStyle = '#ffaa00';
+  ctx.fillRect((W - titleW) / 2, underY + Math.round(H * 0.01), titleW * 0.62, Math.round(H * 0.004));
 
-  // 5. Outer frame.
-  ctx.lineWidth = Math.max(6, W * 0.008);
-  ctx.strokeStyle = '#000';
-  ctx.strokeRect(frame / 2, frame / 2, W - frame, H - frame);
+  const sub = (subtitle || '').toUpperCase();
+  if (sub) {
+    const subPx = fitFont(ctx, sub, W - margin * 4, Math.round(H * 0.026), DISPLAY);
+    ctx.font = `900 ${subPx}px ${DISPLAY}`;
+    ctx.fillStyle = '#5a285a';
+    ctx.fillText(sub, W / 2, underY + Math.round(H * 0.008) + subPx * 1.5);
+  }
+
+  // Outer frame: bold black border.
+  ctx.strokeStyle = black;
+  ctx.lineWidth = Math.max(4, Math.round(W * 0.009));
+  ctx.strokeRect(ctx.lineWidth / 2, ctx.lineWidth / 2, W - ctx.lineWidth, H - ctx.lineWidth);
   return canvas;
+}
+
+/** Downloads the canvas as a PNG file named after the caption. */
+export function exportPng(canvas, caption = 'vice-poster') {
+  const slug = (caption || 'vice-poster')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'vice-poster';
+  const a = document.createElement('a');
+  a.download = `${slug}-${canvas.width}x${canvas.height}.png`;
+  a.href = canvas.toDataURL('image/png');
+  a.click();
 }
