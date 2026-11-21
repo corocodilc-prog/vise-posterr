@@ -474,12 +474,11 @@ function main(): void {
   console.log(`wrote ${pngPath} (${art.width}x${art.height}, ${png.length} bytes)`);
 
   // Best effort: the entry dossier beside the render. A dossier failure
-  // (for example screenshots over their cap) must never fail the render.
+  // (for example a missing dossier input) must never fail the render.
   try {
     const here = dirname(fileURLToPath(import.meta.url));
     const dossier = buildDossier(here, {
       text_max_bytes: 163840,
-      screenshots: { max: 4, max_bytes: 262144 },
       app_max_files: 993,
       app_max_bytes: 50331648,
     });
