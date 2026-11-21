@@ -1,19 +1,49 @@
-// Fixed scenes for screenshots.
-//   ?shot=cover  — the poster alone, fullscreen, no controls. `photo` picks the
-//                  sample (pier / boulevard / both), `caption` the title words,
-//                  `layout` and `grade` override the defaults. The canvas is
-//                  sized to the viewport, so the screenshot shows the poster at
-//                  the window's own aspect ratio.
-//   ?shot=editor — the full editor with a sample photo already loaded.
-// window.__shotReady is set once the scene has painted (two animation frames).
-export async function runShot(shot, query, load) {
-  const photo = query.get('photo') ?? 'pier';
-  const caption = query.get('caption') ?? 'Sunset Heist';
-  if (shot === 'cover') document.body.classList.add('shot-cover');
-  const layout = query.get('layout');
-  const grade = query.get('grade');
-  if (layout) document.querySelector(`#layouts [data-layout="${layout}"]`)?.click();
-  if (grade) document.querySelector(`#grades [data-grade="${grade}"]`)?.click();
-  await load(photo, caption);
-  requestAnimationFrame(() => requestAnimationFrame(() => { window.__shotReady = true; }));
+// Shot presets: named compositions for the Vice Poster editor. Each shot
+// picks the hero palette and the three panel moods shown under it, plus the
+// tag printed on each panel. The renderer (cover.js) reads only these
+// fields, so a new shot is just one more entry here.
+
+export const SHOTS = [
+  {
+    id: 'boulevard',
+    label: 'Boulevard',
+    palette: 'dusk',
+    panels: ['dusk', 'neon', 'dawn'],
+    panelTags: ['BOULEVARD', 'NEON NIGHT', 'GOLDEN HOUR'],
+    caption: 'VICE CITY',
+    subtitle: 'WELCOME TO LEONIDA',
+  },
+  {
+    id: 'pier',
+    label: 'Pier Sunset',
+    palette: 'dawn',
+    panels: ['dawn', 'dusk', 'neon'],
+    panelTags: ['GOLDEN HOUR', 'BOULEVARD', 'NEON NIGHT'],
+    caption: 'PIER SUNSET',
+    subtitle: 'OCEAN DRIVE',
+  },
+  {
+    id: 'neon',
+    label: 'Neon Night',
+    palette: 'neon',
+    panels: ['neon', 'dusk', 'dawn'],
+    panelTags: ['NEON NIGHT', 'BOULEVARD', 'GOLDEN HOUR'],
+    caption: 'NEON NIGHT',
+    subtitle: 'THE CITY NEVER SLEEPS',
+  },
+  {
+    id: 'downtown',
+    label: 'Downtown',
+    palette: 'dusk',
+    panels: ['dusk', 'dawn', 'neon'],
+    panelTags: ['DOWNTOWN', 'GOLDEN HOUR', 'NEON NIGHT'],
+    caption: 'DOWNTOWN',
+    subtitle: 'VICE CITY STORIES',
+  },
+];
+
+export const DEFAULT_SHOT_ID = 'boulevard';
+
+export function shotById(id) {
+  return SHOTS.find((s) => s.id === id) ?? SHOTS[0];
 }
